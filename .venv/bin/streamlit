@@ -1,8 +1,7 @@
-#!/home/xm3van/irm-streamlit-deployment-private/.venv/bin/python3.11
-# -*- coding: utf-8 -*-
-import re
+#!/Users/User/projects/llamarisk/irm-streamlit-deployment/.venv/bin/python
 import sys
 from streamlit.web.cli import main
 if __name__ == '__main__':
-    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    if sys.argv[0].endswith('.exe'):
+        sys.argv[0] = sys.argv[0][:-4]
     sys.exit(main())

@@ -1,4 +1,4 @@
-#!/home/xm3van/irm-streamlit-deployment-private/.venv/bin/python3.11
+#!/Users/User/projects/llamarisk/irm-streamlit-deployment/.venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys
