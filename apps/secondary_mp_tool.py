@@ -36,11 +36,18 @@ beta = st.sidebar.slider("Beta (Aggressiveness)", 1.01, 99.0, 3.0,
                          help="Controls how aggressively the rate increases as utilization exceeds u_opt. Higher beta → steeper curve.")
 shift = st.sidebar.slider("Rate Shift", 0.0, 0.1, 0.00,
                           help="Adds a constant to the output rate. Used to adjust for protocol-level base rate incentives.")
-external_rate = st.sidebar.slider("External Market Rate", 0.01, 0.5, 0.12,
-                                  help="The benchmark external interest rate (e.g., CeFi yield or base AMM return).")
+external_rate = st.sidebar.slider(
+    "External Market Rate",
+    min_value=0.00,
+    max_value=0.50,
+    value=0.12,
+    step=0.001,
+    format="%.3f",
+    help="Benchmark external interest rate (e.g., CeFi yield or base AMM return)."
+)
 
 # Main control — utilization
-utilization = st.slider("📌 Current Market Utilization", 0.01, 0.99, 0.5,
+utilization = st.slider("📌 Current Market Utilization", 0.01, 1.00, 0.5,
                         help="Set the current market utilization to calculate the SMP rate.")
 
 # Model initialization
@@ -61,7 +68,7 @@ except Exception as e:
 # Rate curve visualization
 st.subheader("📊 Interest Rate Curve")
 
-util_vals = np.linspace(0.01, 0.99, 100)
+util_vals = np.linspace(0.01, 1.00, 100)
 rate_vals = []
 for u in util_vals:
     try:
