@@ -74,7 +74,7 @@ rate_max = st.sidebar.slider(
 
 log_y = st.sidebar.checkbox(
     "Log‑scale Y‑axis",
-    value=True,
+    value=False,
     help="Recommended for exponential curves to see the whole range clearly.",
 )
 
@@ -150,15 +150,3 @@ st.download_button(
     mime="application/json",
 )
 
-# ── Integration snippet ─────────────────────────────────────────────────────
-st.markdown(
-    f"""
----
-### 🔌 Integration Snippet
-```python
-from interest_rate_models.semilog_irm import SemiLogIRM  # or: from semilog_irm import SemiLogIRM
-model = SemiLogIRM(rate_min={rate_min}, rate_max={rate_max})
-rate = model.calculate_rate({utilization})
-```
-"""
-)
