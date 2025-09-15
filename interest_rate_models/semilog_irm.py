@@ -1,4 +1,4 @@
-from base_irm import BaseIRM
+from .base_irm import BaseIRM
 
 class SemiLogIRM(BaseIRM):
 
