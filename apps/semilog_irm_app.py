@@ -38,10 +38,10 @@ This app explores a **Semi‑Log** interest‑rate model where the borrow rate g
 *exponentially* with utilization.
 
 **Definition**  
-\[
+$$
   r(u) = r_{\min} \cdot \Big(\frac{r_{\max}}{r_{\min}}\Big)^{u}
 \;=\; \exp\big(\ln r_{\min} + u\,\ln(\tfrac{r_{\max}}{r_{\min}})\big),\quad u\in[0,1].
-\]
+$$
 
 > **Units**: Rates are **decimals** (e.g., 0.10 = 10%, 10 = 1000%).
     """
@@ -116,20 +116,6 @@ try:
 except Exception as e:
     st.error(f"Could not compute rate: {e}")
     st.stop()
-
-# Key checkpoints (sanity)
-r_at_0 = model.calculate_rate(0.0)
-r_at_05 = model.calculate_rate(0.5)
-r_at_1 = model.calculate_rate(1.0)
-
-st.subheader("🔎 Checkpoints")
-st.write(
-    {
-        "r(0.0)": round(r_at_0, 10),
-        "r(0.5)": round(r_at_05, 10),
-        "r(1.0)": round(r_at_1, 10),
-    }
-)
 
 # ── Plot curve ──────────────────────────────────────────────────────────────
 st.subheader("📊 Rate Curve")
