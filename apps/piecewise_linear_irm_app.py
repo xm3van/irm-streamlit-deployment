@@ -57,19 +57,19 @@ u_opt = st.sidebar.slider(
 )
 
 r0 = st.sidebar.slider(
-    "r0 (base)", min_value=0.0, max_value=2.0, value=0.02, step=0.005,
+    "r0 (base)", min_value=0.0, max_value=0.5, value=0.02, step=0.005,
     help="Base intercept rate at u = 0."
 )
 
 r1 = st.sidebar.slider(
-    "r1 (slope ≤ u_opt)", min_value=0.0, max_value=5.0, value=0.10, step=0.01,
+    "r1 (slope ≤ u_opt)", min_value=0.0, max_value=1.0, value=0.10, step=0.01,
     help="Slope for the left segment (encourages borrowing at low u)."
 )
 
 # Ensure r2 ≥ r1 by constraining min dynamically
-_default_r2 = float(max(0.30, r1))
+_default_r2 = float(max(0.01, r1))
 r2 = st.sidebar.slider(
-    "r2 (slope > u_opt)", min_value=float(r1), max_value=5.0,
+    "r2 (slope > u_opt)", min_value=float(r1), max_value=10.0,
     value=_default_r2, step=0.01,
     help="Slope for the right segment. Typically r2 ≥ r1 for sharper response."
 )
