@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -25,14 +24,14 @@ T = TARGET_REMAINDER / 1e18
 @dataclass
 class PolicyInputs:
     rate0_apy: float
-    sigma: float            # 1e18-scaled (e.g., 2e16), MUST be in [1e14, 1e18]
+    sigma: float            # 1e18-scaled (e.g., 7e15), MUST be in [1e14, 1e18]
     target_fraction: float  # 0..1 (strictly >0 onchain)
     pegkeeper_debt: float
     total_debt: float
     price: float            # $ (oracle aggregate)
     price_peg: float = 1.0  # typically 1.00
 
-    # Extras from contract we expose via UI
+    # Extras we expose via UI
     extra_const_apy: float = 0.0  # added after the exp() core, like a floor/shift
     ceiling_util: float = 0.0     # f in [0, 0.99], per-market debt/ceiling utilization
 
@@ -107,7 +106,6 @@ def apy_at_point_full(P: PolicyInputs, price: float, df: float) -> float:
     # Contract edge case: if pk_debt > 0 and total_debt == 0 → return 0
     if P.pegkeeper_debt > 0 and P.total_debt == 0:
         return 0.0
-    # Normal path
     price_raw = int(price * ONE)
     df_raw = int(np.clip(df, 0.0, 1.0) * ONE)
     pow_ = compute_power(P.price_peg_raw, price_raw, df_raw, P.sigma, P.target_fraction_raw)
@@ -135,24 +133,24 @@ def neutrality_curve_df(P: PolicyInputs, prices: np.ndarray) -> np.ndarray:
 st.set_page_config(page_title="crvUSD Monetary Policy", layout="wide")
 st.title("🏦 crvUSD Monetary Policy — System Model")
 
-# Intro: formula + quick explanation (no separate docs page)
+# Intro: formula + quick explanation (APY-first terminology)
 st.markdown(
     r"""
 **Policy mechanics**  
 Per contract logic, the per-second borrow rate is:
 $$
 \underbrace{\text{rate}}_{\text{per-second}} \;=\;
-\underbrace{\text{rate0}\cdot e^{\text{power}}}_{\text{core}} \;
+\underbrace{\text{rate0}\cdot e^{\text{APY pressure}}}_{\text{core}} \;
 +\; \underbrace{\text{extra\_const}}_{\text{added after core}}
 $$
 then multiplied by a **debt-ceiling utilization** factor and finally **capped**:
 $$
 \text{rate} \leftarrow
-\min\!\Big( \big(\text{rate0}\cdot e^{\text{power}} + \text{extra\_const}\big)\cdot \text{mult}(f) ,\; \text{MAX\_RATE}\Big)
+\min\!\Big( \big(\text{rate0}\cdot e^{\text{APY pressure}} + \text{extra\_const}\big)\cdot \text{mult}(f) ,\; \text{MAX\_RATE}\Big)
 $$
-where
+where the **APY pressure** (a.k.a. *power* in code) is
 $$
-\text{power} = \frac{\text{price}_{peg} - \text{price}_{crvusd}}{\sigma}
+\text{APY pressure} = \frac{\text{price}_{peg} - \text{price}_{crvusd}}{\sigma}
                - \frac{\text{DebtFraction}}{\text{TargetFraction}},\qquad
 \text{DebtFraction}=\frac{\text{PegKeeperDebt}}{\text{TotalDebt}}
 $$
@@ -164,49 +162,57 @@ $$
 **Edge case** per contract: if **PegKeeperDebt > 0** and **TotalDebt = 0**, the rate returns **0**.
 
 **Intuition** 
-- **Price ↓ ⇒ Rate ↑** (below-peg prices raise the policy power).
-- **Price ↑ ⇒ Rate ↓** (above-peg prices lower the policy power).
-- **DebtFraction ↓ ⇒ Rate ↑** (below-target debt share raises power).
-- **DebtFraction ↑ ⇒ Rate ↓** (above-target debt share lowers power).
+- **Price ↓ ⇒ APY ↑** (below-peg raises APY pressure).
+- **Price ↑ ⇒ APY ↓** (above-peg lowers APY pressure).
+- **DebtFraction ↓ ⇒ APY ↑** (below-target DF raises APY pressure).
+- **DebtFraction ↑ ⇒ APY ↓** (above-target DF lowers APY pressure).
 """
 )
 
-# Sidebar inputs — with concise parameter help (no separate docs section)
+# Sidebar inputs
 st.sidebar.header("Inputs")
+
+# Defaults from deployed contract
+_default_rate0_raw = 3_488_077_118  # per-second, 1e18-scaled
+_default_rate0_ps  = _default_rate0_raw / ONE
+_default_rate0_apy = (1.0 + _default_rate0_ps) ** SECONDS_PER_YEAR - 1.0
 
 rate0_apy = st.sidebar.slider(
     "Baseline rate0 (APY)",
-    0.0, 3.0, 0.10, 0.001, format="%.3f",
-    help="Admin baseline APY at power=0. Contract cap ≈ 300% APY."
+    0.0, 3.0, float(_default_rate0_apy), 0.001, format="%.3f",
+    help="Baseline APY when APY pressure = 0. Contract cap ≈ 300% APY."
 )
 
-log_sigma = st.sidebar.slider(
-    "log10(sigma)",
-    14.0, 18.0, 17.0, 0.1,
-    help="Price sensitivity (1e18-scaled). Must satisfy 1e14 ≤ sigma ≤ 1e18 onchain."
+# sigma control is log10(σ) in UI; convert internally (auto-bounds to [1e14,1e18])
+_default_log_sigma = float(np.log10(7e15))
+log_sigma_ui = st.sidebar.slider(
+    "Price sensitivity (σ) — log10 scale",
+    14.0, 18.0, _default_log_sigma, 0.001,
+    help="This control is log10(σ). Example: σ=7e15 ⇒ log10(σ)=15.845. Smaller σ = steeper APY response."
 )
-sigma = float(np.clip(10 ** log_sigma, 1e14, 1e18))
+sigma = float(np.clip(10 ** log_sigma_ui, 1e14, 1e18))
 
 target_fraction = st.sidebar.slider(
-    "TargetFraction (debt share)",
-    0.01, 1.0, 0.40, 0.01,
-    help="Target PegKeeper debt share. Higher target weakens debt penalty in the power term."
+    "Utilization target (TargetFraction)",
+    0.01, 1.0, 0.20, 0.01,
+    help="Target PegKeeper debt share. Higher Target weakens the DF penalty in the APY core."
 )
 
+# Debt controls: single DF
 st.sidebar.subheader("Debt")
-pegkeeper_debt = st.sidebar.slider(
-    "PegKeeperDebt", 0.0, 1_000_000_000.0, 10_000_000.0, 100_000.0, format="%.0f",
-    help="Numerator of DebtFraction. If >0 while TotalDebt=0, contract returns 0 rate."
+debt_fraction_ui = st.sidebar.slider(
+    "PegKeeper utilization (DebtFraction)", 0.0, 1.0, 0.05, 0.005,
+    help="Policy uses only this ratio in the APY core."
 )
-total_debt = st.sidebar.slider(
-    "TotalDebt", 1.0, 5_000_000_000.0, 100_000_000.0, 1_000_000.0, format="%.0f",
-    help="Denominator of DebtFraction. DF = PegKeeperDebt / TotalDebt."
-)
+
+# Internally derive absolute values (kept for compatibility with the model structure)
+total_debt = 1.0
+pegkeeper_debt = float(debt_fraction_ui) * total_debt
 
 st.sidebar.subheader("Price")
 price = st.sidebar.slider(
-    "price_crvusd", 0.90, 1.10, 1.00, 0.0001,
-    help="Aggregated oracle price. Below peg ⇒ power ↑ ⇒ rate ↑."
+    "price_crvusd", 0.90, 1.10, 1.00, 0.0001, format="%.4f",
+    help="Below peg ⇒ APY pressure ↑ ⇒ APY ↑. Above peg ⇒ APY ↓."
 )
 price_peg = st.sidebar.number_input(
     "price_peg (target)", 0.90, 1.10, 1.00, 0.0001, format="%.4f",
@@ -217,12 +223,12 @@ st.sidebar.subheader("Contract extras")
 extra_const_apy = st.sidebar.slider(
     "extra_const (APY add-on)",
     0.0, 3.0, 0.00, 0.001, format="%.3f",
-    help="Added after the exponential core (per contract). Shifts the curve upward."
+    help="Added after the exponential core. Shifts the entire APY curve upward."
 )
 ceiling_util = st.sidebar.slider(
     "Debt-ceiling utilization f",
     0.0, 0.99, 0.00, 0.01,
-    help="Per-market stress knob. Multiplier ≈ 0.9 + 0.1/(1−f). Capped by MAX_RATE."
+    help="Per-market stress knob. Multiplier ≈ 0.9 + 0.1/(1−f). Final APY still capped."
 )
 
 log_y = st.sidebar.checkbox("Log-scale Y for 2D slices", value=False)
@@ -240,9 +246,8 @@ P = PolicyInputs(
     ceiling_util=ceiling_util,
 )
 
-# Current point computation (contract-faithful path)
+# Current point computation
 if P.pegkeeper_debt > 0 and P.total_debt == 0:
-    # Contract edge-case
     annual_rate = 0.0
     power = 0.0
     rate_per_sec_core = 0.0
@@ -259,7 +264,7 @@ rate_raw = min(rate_per_sec * ONE, MAX_RATE_RAW)
 c1, c2, c3 = st.columns(3)
 c1.metric("DebtFraction", f"{P.debt_fraction:.2%}")
 c2.metric("Annualized (APY)", f"{annual_rate:.2%}")
-c3.metric("Final per-sec (1e18)", f"{rate_raw:,.0f}")
+c3.metric("Final rate (per-sec · 1e18)", f"{rate_raw:,.0f}")
 
 # System inputs snapshot + micro-sensitivity chips
 colA, colB = st.columns([2,1])
@@ -292,16 +297,16 @@ with colB:
 st.markdown("---")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Explainer (one paragraph, already concise above)
+# Explainer (one paragraph)
 st.markdown(
     r"""
-**Reading the visuals.** Price below peg and/or DebtFraction below Target **raises** `power` ⇒ **raises** rate; the opposite **lowers** it.  
-The **extra_const** then shifts the whole curve up; the **debt-ceiling multiplier** increases the rate as a market approaches its ceiling; and the final per-second rate is capped at ~**300% APY** equivalent.
+**Reading the visuals.** Price below peg and/or DebtFraction below Target **raises** the **APY pressure** (core) ⇒ **raises** APY; the opposite **lowers** it.  
+The **extra_const** shifts the curve up; the **debt-ceiling multiplier** increases APY as a market approaches its ceiling; and the final per-second rate is capped at ~**300% APY** equivalent.
 """
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Interactive 3D Surface (Plotly) — now contract-faithful
+# Interactive 3D Surface (Plotly) — contract-faithful
 st.subheader("Interactive 3D surface — APY(price, DebtFraction)")
 
 # Grid
@@ -309,13 +314,13 @@ px = np.linspace(0.90, 1.10, 121)
 DF = np.linspace(0.0, 1.0, 101)
 PX, DFg = np.meshgrid(px, DF)
 
-# Compute APY over grid with full contract extras
+# Compute APY over grid
 Z = np.zeros_like(PX)
 for i in range(DFg.shape[0]):
     for j in range(PX.shape[1]):
         Z[i, j] = apy_at_point_full(P, PX[i, j], DFg[i, j])
 
-# Color by APY ÷ baseline (normalized 0.5×..1.5×) — uses displayed APY now
+# Color by APY ÷ baseline (normalized 0.5×..1.5×)
 Zbase = max(P.rate0_apy, 1e-12)
 Zratio = Z / Zbase
 Zratio_norm = (np.clip(Zratio, 0.5, 1.5) - 0.5) / 1.0  # → [0,1]
@@ -374,7 +379,7 @@ st.markdown("---")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 2D Policy Dashboard (live) — contract-faithful computations
-st.markdown("### 🔎 2D Policy Dashboard")
+st.markdown("### 🔎 2D Policy View")
 
 # Row A
 rA1, rA2, rA3 = st.columns([1,1,1])
@@ -396,17 +401,25 @@ with rA1:
                        height=320, legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     if log_y: fig1.update_yaxes(type="log")
     st.plotly_chart(fig1, use_container_width=True, config={"displaylogo": False})
-    st.caption("Price term in power is (peg − price)/σ. Smaller σ ⇒ steeper slope. Curves already include extra_const, ceiling multiplier, and cap.")
+    st.caption("Price effect enters the APY core as (peg − price)/σ. Smaller σ ⇒ steeper APY response. Curves include extra_const, ceiling multiplier, and cap.")
 
 with rA2:
     st.markdown("#### APY vs **DebtFraction** (holding Price fixed)")
     xs = np.linspace(0.0, 1.0, 301)
     fig2 = go.Figure()
-    price_lines = (0.98, 1.00, 1.02)
-    for pr in price_lines:
-        ys = [apy_at_point_full(P, pr, df) for df in xs]
-        fig2.add_scatter(x=xs, y=ys, mode="lines", name=f"price {pr:.3f}",
-                         line=dict(width=2 if abs(pr-P.price) < 1e-9 else 1))
+    # Show TARGET variants at price ≈ 1.0 (more useful operationally)
+    target_lines = (max(P.target_fraction*0.5, 0.01), P.target_fraction, min(P.target_fraction*1.5, 1.0))
+    labels = ["Target ×0.5", "Target (cur)", "Target ×1.5"]
+    for tgt, lab in zip(target_lines, labels):
+        P_tmp = PolicyInputs(
+            rate0_apy=P.rate0_apy, sigma=P.sigma, target_fraction=float(tgt),
+            pegkeeper_debt=P.pegkeeper_debt, total_debt=P.total_debt,
+            price=1.00, price_peg=P.price_peg,
+            extra_const_apy=P.extra_const_apy, ceiling_util=P.ceiling_util,
+        )
+        ys = [apy_at_point_full(P_tmp, P_tmp.price, df) for df in xs]
+        width = 3 if np.isclose(tgt, P.target_fraction) else 1
+        fig2.add_scatter(x=xs, y=ys, mode="lines", name=lab, line=dict(width=width))
     cur_apy = apy_at_point_full(P, P.price, P.debt_fraction)
     fig2.add_vline(x=P.debt_fraction, line_dash="dot")
     fig2.add_vline(x=P.target_fraction, line_dash="dot", line_color="gray")
@@ -416,25 +429,25 @@ with rA2:
                        height=320, legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     if log_y: fig2.update_yaxes(type="log")
     st.plotly_chart(fig2, use_container_width=True, config={"displaylogo": False})
-    st.caption("Debt term in power is −DF/Target. Curves include extra_const, ceiling multiplier, and cap.")
+    st.caption("Utilization effect enters as −DF/Target. Panel compares different Target settings at price≈1.0. Curves include extras and cap.")
 
 with rA3:
-    st.markdown("#### Contour — **APY** over (Price, DebtFraction) with Neutrality")
+    st.markdown("#### Contour — **APY** over (Price, DebtFraction) with Baseline Frontier")
     prices = np.linspace(0.95, 1.05, 181)
     dfs    = np.linspace(0.0, 1.0, 121)
     PXc, DFc, Zc = apy_grid_full(P, prices, dfs)
-    mask = np.abs(Zc - P.rate0_apy) < (50/1e4)  # 50 bps default
+    mask = np.abs(Zc - P.rate0_apy) < (50/1e4)  # 50 bps neutral band
     df_curve = neutrality_curve_df(P, prices)
     fig3 = go.Figure()
     fig3.add_trace(go.Heatmap(z=Zc, x=prices, y=dfs, colorscale="Viridis", colorbar=dict(title="APY")))
     fig3.add_trace(go.Contour(z=mask.astype(int), x=prices, y=dfs, showscale=False, contours_coloring='lines',
                               line=dict(color="white")))
-    fig3.add_scatter(x=prices, y=df_curve, mode="lines", name="power=0 (core)", line=dict(color="white", width=3, dash="dash"))
+    fig3.add_scatter(x=prices, y=df_curve, mode="lines", name="baseline-APY frontier (core)", line=dict(color="white", width=3, dash="dash"))
     fig3.add_scatter(x=[P.price], y=[P.debt_fraction], mode="markers", name="current", marker=dict(size=9, color="red"))
     fig3.update_layout(xaxis_title="price_crvusd", yaxis_title="DebtFraction",
                        height=320, legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     st.plotly_chart(fig3, use_container_width=True, config={"displaylogo": False})
-    st.caption("Heatmap is the final APY (incl. extras & cap). Dashed line is the core power=0 neutrality (ignores extras).")
+    st.caption("Heatmap shows final APY (incl. extras & cap). Dashed line marks where the core implies APY ≈ rate0.")
 
 st.markdown("---")
 
@@ -443,40 +456,55 @@ st.markdown("---")
 rB1, rB2, rB3 = st.columns([1,1,1])
 
 with rB1:
+    # Single policy map with toggle preserved, but APY-first wording
     st.markdown("#### Policy map — **(peg − price, DF / Target)**")
+    map_mode = st.radio("Metric", ["APY pressure (core)", "APY (final)"], horizontal=True, key="policy_map_mode")
     prices = np.linspace(0.95, 1.05, 181)
     dfs    = np.linspace(0.0, 1.0, 121)
-    PXm, DFm, _ = apy_grid_full(P, prices, dfs)
+    PXm, DFm, Zm_final = apy_grid_full(P, prices, dfs)
     dev_x   = P.price_peg - prices
     ratio_y = dfs / max(P.target_fraction, 1e-12)
-    # For display: core power (1e18-scaled), independent of extras
-    POW = np.zeros_like(PXm)
-    for i in range(DFm.shape[0]):
-        for j in range(PXm.shape[1]):
-            POW[i, j] = compute_power(P.price_peg_raw, int(PXm[i, j]*ONE), int(DFm[i, j]*ONE), P.sigma, P.target_fraction_raw) / ONE
+
+    if map_mode == "APY pressure (core)":
+        Z_show = np.zeros_like(PXm)
+        for i in range(DFm.shape[0]):
+            for j in range(PXm.shape[1]):
+                Z_show[i, j] = compute_power(P.price_peg_raw, int(PXm[i, j]*ONE), int(DFm[i, j]*ONE), P.sigma, P.target_fraction_raw) / ONE
+        colorscale = "RdBu"
+        reversescale = True
+        cbar_title = "APY pressure (core index)"
+    else:
+        Z_show = Zm_final
+        colorscale = "Viridis"
+        reversescale = False
+        cbar_title = "APY"
+
+    # Baseline frontier (core)
     line_y = (ONE / P.sigma) * (P.price_peg - prices)
-    fig4 = go.Figure(data=go.Heatmap(z=POW, x=dev_x, y=ratio_y, colorscale="RdBu", reversescale=True,
-                                     colorbar=dict(title="power (1e18-scaled)")))
+
+    fig4 = go.Figure(data=go.Heatmap(
+        z=Z_show, x=dev_x, y=ratio_y, colorscale=colorscale, reversescale=reversescale,
+        colorbar=dict(title=cbar_title)
+    ))
     fig4.add_scatter(x=dev_x, y=line_y/max(P.target_fraction,1e-12), mode="lines",
-                     name="power=0", line=dict(color="black", dash="dash"))
+                     name="baseline-APY frontier", line=dict(color="black", dash="dash"))
     fig4.add_vline(x=P.price_peg - P.price, line_dash="dot")
     fig4.add_hline(y=P.debt_fraction/max(P.target_fraction,1e-12), line_dash="dot")
     fig4.update_layout(xaxis_title="peg − price", yaxis_title="DF / Target", height=320,
                        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     st.plotly_chart(fig4, use_container_width=True, config={"displaylogo": False})
-    st.caption("X=0 ⇒ at peg; Y=1 ⇒ at target. The diagonal is the neutrality frontier of the core power term.")
+    st.caption("X=0 ⇒ at peg; Y=1 ⇒ at target. Toggle between **APY pressure (core)** and **final APY**. The dashed line is the baseline-APY frontier (APY ≈ rate0).")
 
 with rB2:
-    st.markdown("#### **Iso-APY** targeting curve — implied DF across price")
+    st.markdown("#### **Iso-APY** targeting curve — implied DF across price (core guidance)")
     xs = np.linspace(0.95, 1.05, 401)
     target_apy = float(max(P.rate0_apy, 0.12))  # sensible default
     rps = deannualize(target_apy)
     r_raw = rps * ONE
-    # Solve via core power (unique): power_t = ln(r/r0)
     power_t = ONE * math.log(max(r_raw, 1e-24) / max(P.rate0_raw, 1e-24))
     df_line = P.target_fraction * ((P.price_peg - xs) * (ONE / P.sigma) - (power_t / ONE))
     df_line = np.clip(df_line, 0.0, 1.0)
-    # ± band (±50 bps) — note: final APY differs with extras; this is a core-guidance line
+    # ±50 bps guidance band (core)
     up = target_apy + 50/1e4
     dn = max(target_apy - 50/1e4, 0.0)
     def df_for_apy(apy_val):
@@ -493,11 +521,10 @@ with rB2:
     fig5.update_layout(xaxis_title="price_crvusd", yaxis_title="DebtFraction",
                        height=320, legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
     st.plotly_chart(fig5, use_container_width=True, config={"displaylogo": False})
-    st.caption("Guidance using the core exponential only. Final APY will shift with extra_const, ceiling multiplier, and the max-rate cap.")
+    st.caption("Core guidance: DF required across price to maintain a chosen APY. Final APY will shift with extras, ceiling multiplier, and the cap.")
 
 with rB3:
-    st.markdown("#### Decomposition — `rate0` → **APY** (core vs extras)")
-    # Core decomposition at current point
+    st.markdown("#### Decomposition — `rate0` → **APY** (core → extras → ceiling → cap)")
     pp = ((P.price_peg_raw - P.price_raw) * ONE) / P.sigma
     pd = - (P.df_raw * ONE) / P.target_fraction_raw
     mult_price = math.exp(pp/ONE)
@@ -505,7 +532,6 @@ with rB3:
     base_ps = P.rate0_per_sec
     step1   = base_ps * mult_price
     step2   = step1   * mult_debt
-    # Add extras and cap
     step3   = apply_contract_extras(step2, P.extra_raw, P.ceiling_util)
 
     r0_apy  = (1.0 + base_ps) ** SECONDS_PER_YEAR - 1.0
@@ -517,52 +543,55 @@ with rB3:
         name="APY",
         orientation="v",
         measure=["absolute","relative","relative","relative"],
-        x=["rate0","price term","debt term","extras+ceiling+cap"],
+        x=["rate0","price effect","utilization effect","extras+ceiling+cap"],
         text=[f"{r0_apy:.2%}", f"×{mult_price:.2f}", f"×{mult_debt:.2f}", ""],
         y=[r0_apy, s1_apy - r0_apy, s2_apy - s1_apy, s3_apy - s2_apy],
     ))
     wf.update_layout(showlegend=False, height=320, yaxis_title="APY")
     st.plotly_chart(wf, use_container_width=True, config={"displaylogo": False})
-    st.caption("Core multiplicative steps shown first; final bar adds extra_const, debt-ceiling multiplier, and the cap to reach displayed APY.")
+    st.caption("Multiplicative core steps first (price & utilization), then extras + ceiling multiplier, then the cap to reach displayed APY.")
 
 st.markdown("---")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Additional figure — contract-faithful heatmap in (peg-price, DF/Target)
-st.header("Additional Figures")
-st.subheader("Policy map in (peg − price, DF / Target) coordinates")
-PXh, DFh = np.meshgrid(px, DF)
-dev_x = P.price_peg - PXh
-ratio_y = DFh / max(P.target_fraction, 1e-12)
-Zh = np.zeros_like(PXh)
-for i in range(DFh.shape[0]):
-    for j in range(PXh.shape[1]):
-        Zh[i, j] = apy_at_point_full(P, PXh[i, j], DFh[i, j])
-hm = go.Figure(data=go.Heatmap(z=Zh, x=dev_x[0, :], y=ratio_y[:, 0], colorscale="Viridis", colorbar=dict(title="APY")))
-hm.update_layout(xaxis_title="peg − price", yaxis_title="DF / Target")
-st.plotly_chart(hm, use_container_width=True, config={"displaylogo": False})
-st.caption(
-    """
-    **Explainer — Policy map (peg − price, DF / Target)**
-    - **X (peg − price):** distance from peg. X>0 ⇒ price below peg; X<0 ⇒ price above peg.
-    - **Y (DF / Target):** PegKeeper debt share vs target. Y=1 ⇒ at target; Y<1 ⇒ below; Y>1 ⇒ above.
-    - **Diagonal (power = 0):** neutrality frontier. Points **on** it ≈ `rate0`.
-      - **Below the line:** core policy ↑ (APY > rate0).
-      - **Above the line:** core policy ↓ (APY < rate0).
-    - **Colors:** effective APY (including extras). Warmer = higher APY, cooler = lower.
+with st.expander("📘 Parameterization guide — how to analyze & tune this model"):
+    st.markdown(r"""
+**Quick mental model**
 
-    **Tip:** Check the current marker’s side of the diagonal to see if policy is pushing above or below baseline.
-    """
-)
+$$
+\text{APY} \approx \Big(\underbrace{\text{rate0}\cdot e^{\text{APY pressure}}}_{\text{core}} + \underbrace{\text{extra}}_{\text{add-on}}\Big)\times \underbrace{\text{mult}(f)}_{\text{ceiling}}\quad\text{capped}
+$$
+$$
+\text{APY pressure}=\frac{\text{peg}-\text{price}}{\sigma}-\frac{\text{DF}}{\text{Target}},\quad \text{DF}=\frac{\text{PegKeeperDebt}}{\text{TotalDebt}}
+$$
+$$
+\text{mult}(f)\approx (1-0.1)+\frac{0.1}{1-f},\;f\in[0,1)
+$$
 
+**What each control does (and how to use it)**
 
-st.markdown("---")
+- **rate0 (APY)** – Baseline when APY pressure = 0.  
+  *Use:* lifts/lowers the whole surface uniformly. Contract default ≈ **12%** APY (from `rate0_raw=3,488,077,118`). Cap ≈ **300%** APY.
 
-# # Optional: Download snapshot JSON
-# snap = {"inputs": asdict(P), "derived": {"debt_fraction": P.debt_fraction,
-#         "rate0_per_sec": P.rate0_per_sec, "rate0_raw": P.rate0_raw,
-#         "power": float(power), "rate_per_sec_core": float(rate_per_sec_core),
-#         "rate_per_sec": float(rate_per_sec), "rate_raw": float(rate_raw),
-#         "annual_rate": float(annual_rate)}}
-# st.download_button("⬇️ Download snapshot (JSON)", data=pd.Series(snap).to_json(indent=2),
-#                    file_name="crvusd_policy_snapshot_v4.json", mime="application/json")
+- **sigma** – Price sensitivity (slider is **log10(σ)**; the app converts to raw σ).  
+  *Effect:* smaller σ ⇒ **steeper** APY response; larger σ ⇒ **flatter**.
+
+- **TargetFraction** – Strength of the utilization term (pressure includes **− DF / Target**).  
+  *Use:* **Decrease** Target to penalize high DF more (lower APY for given DF); **Increase** Target for the opposite.
+
+- **DebtFraction (DF)** – Scenario input. Higher DF ⇒ lower APY (given Target).  
+- **price / peg** – Scenario inputs. Below-peg ⇒ higher APY; above-peg ⇒ lower APY.
+- **extra_const (APY add-on)** – Post-core uplift (cap still applies).
+- **ceiling utilization (f)** – Multiplier that grows as a market fills; capped.
+
+**How to analyze**
+
+1. Start from defaults (rate0 ≈12% APY, σ=7e15, Target=0.20, price=1.00, DF≈0.05).  
+2. Set **DF** and **price** to your scenario.  
+3. Use **APY vs Price** to tune **σ** (steepness).  
+4. Use **APY vs DF** with Target variants to tune **TargetFraction**.  
+5. Inspect the **Contour** for the baseline-APY frontier (APY ≈ rate0).  
+6. Use the **Waterfall** to see extras/ceiling contributions and whether you’re near the cap.  
+7. For uniform shifts, adjust **rate0** (or small **extra_const** if post-core uplift is intended).
+
+**Bounds & guardrails:** on-chain **1e14 ≤ σ ≤ 1e18**, **0 < Target ≤ 1**, **rate ≤ cap**.
+""")
