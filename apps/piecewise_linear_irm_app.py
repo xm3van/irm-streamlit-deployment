@@ -69,7 +69,7 @@ r1 = st.sidebar.slider(
 # Ensure r2 ≥ r1 by constraining min dynamically
 _default_r2 = float(max(0.01, r1))
 r2 = st.sidebar.slider(
-    "r2 (slope > u_opt)", min_value=float(r1), max_value=50.0,
+    "r2 (slope > u_opt)", min_value=float(r1), max_value=10.0,
     value=_default_r2, step=0.01,
     help="Slope for the right segment. Typically r2 ≥ r1 for sharper response."
 )
