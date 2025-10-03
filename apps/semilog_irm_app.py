@@ -56,7 +56,7 @@ rate_min = st.sidebar.slider(
     max_value=1.0,
     value=0.0001,
     step=0.00001,
-    format="%.4f",
+    format="%.12f",
     help="Minimum (floor) borrow rate r_min as a decimal (e.g., 0.0001 = 0.01%).",
 )
 
