@@ -11,37 +11,53 @@ from interest_rate_models.secondary_monetary_policy import SecondaryMonetaryPoli
 
 st.set_page_config(layout="centered", page_title="Secondary Monetary Policy")
 st.title("📊 Secondary Monetary Policy Simulator")
+st.write(
+    "Secondary Monetary Policy (SMP) defines the borrow rate as a hyperbolic function "
+    "of utilization, scaled by an external reference rate."
+)
 
-st.markdown(
-    """
-### Short description
-Secondary Monetary Policy (SMP) maps utilization and an external reference rate into protocol borrow rate.
+st.markdown("Formula:")
+st.latex(
+    r"r(u)=r_0\left(r_{\min f}+\frac{A}{u_{\inf}-u}\right)+\mathrm{shift}"
+)
 
-### Formula intuition
-The model blends:
-- a **low-utilization floor effect** (`alpha`),
-- a **high-utilization steepness effect** (`beta`),
-- and an additive **shift**.
+st.markdown("Derived parameters:")
+st.latex(
+    r"u_{\inf}=\frac{(\beta-1)u_{\mathrm{opt}}}{(\beta-1)u_{\mathrm{opt}}-(1-u_{\mathrm{opt}})(1-\alpha)}"
+)
+st.latex(
+    r"A=(1-\alpha)\frac{u_{\inf}(u_{\inf}-u_{\mathrm{opt}})}{u_{\mathrm{opt}}}"
+)
+st.latex(
+    r"r_{\min f}=\alpha-\frac{A}{u_{\inf}}"
+)
 
-### Parameter intuition
-- `u_opt`: target utilization pivot.
-- `alpha`: how low rates can stay when utilization is below target.
-- `beta`: how fast rates increase above target.
-- `shift`: global upward offset.
-- `external_rate`: external anchor level.
+st.markdown("Variables:")
+st.write(
+"""
+- `u` — utilization (debt / total liquidity), in [0, 1]  
+- `r(u)` — borrow rate  
+- `r_0` — external reference rate (constant in this app; EMA on-chain)  
+- `shift` — additive rate offset  
+- `u_opt` — target utilization (pivot point)  
+- `alpha` — rate ratio at zero utilization  
+- `beta` — rate ratio near full utilization  
 
-Reference: [Curve docs — Secondary MP](https://docs.curve.finance/developer/lending/contracts/secondary-mp)
+Interpretation:
+- At low utilization → rate ≈ `alpha * r_0`  
+- Near target utilization → rate ≈ `r_0`  
+- As utilization → `u_inf` → rate → ∞ (vertical asymptote)  
 """
 )
 
 st.sidebar.header("Model Parameters")
-u_opt = st.sidebar.slider("Target utilization u_opt (%)", 10.0, 99.0, 85.0, 0.5) / 100.0
+u_opt = st.sidebar.slider("Target utilization u_opt (%)", 5.0, 100.0, 85.0, 0.5) / 100.0
 alpha = st.sidebar.slider("Alpha (low-utilization floor ratio)", 0.01, 0.99, 0.35, 0.01)
 beta = st.sidebar.slider("Beta (high-utilization aggressiveness)", 1.01, 99.0, 3.0, 0.1)
 shift = st.sidebar.slider("Shift (percentage points)", 0.0, 20.0, 0.0, 0.1) / 100.0
-external_rate = st.sidebar.slider("External market rate (%)", 0.0, 100.0, 12.0, 0.1) / 100.0
+external_rate = st.sidebar.slider("External Reference rate (%)", 0.0, 100.0, 4.2, 0.1) / 100.0
 
-utilization = st.slider("Current utilization (%)", 1.0, 100.0, 50.0, 0.5) / 100.0
+utilization = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.5) / 100.0
 
 if utilization < 0.02 or utilization > 0.98:
     st.warning("Utilization near 0%/100% can produce sharp moves in output rate.")

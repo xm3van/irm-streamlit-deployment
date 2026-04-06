@@ -17,34 +17,39 @@ st.set_page_config(page_title="Semi-Log Monetary Policy", layout="centered")
 st.title("📈 Semi-Log Monetary Policy Simulator")
 
 st.markdown(
+    "Semi-log policy maps utilization $u$ to borrow rate $r(u)$ with exponential growth."
+)
+st.latex(
+    r"r(u)=r_{\min}\cdot\left(\frac{r_{\max}}{r_{\min}}\right)^u,\quad u\in[0,1]"
+)
+
+st.markdown("Explanation:")
+st.markdown(
     """
-### Short description
-Semi-log policy maps utilization \(u\) to borrow rate \(r(u)\) with exponential growth.
-
-### Formula
-\[
-r(u)=r_{min}\cdot\left(\frac{r_{max}}{r_{min}}\right)^u,\quad u\in[0,1]
-\]
-
-### Explanation
 - At `u = 0`: `r(u) = r_min`
 - At `u = 1`: `r(u) = r_max`
 - Between 0 and 1: growth is smooth but increasingly steep.
+"""
+)
 
-### Intuition
+st.markdown("Intuition:")
+st.markdown(
+    """
 - `r_min`: floor rate when liquidity is abundant.
 - `r_max`: stress rate near full utilization.
 - Larger `r_max / r_min`: sharper upward curve as utilization rises.
-
-Reference: [Curve docs — Semi-Log MP](https://docs.curve.finance/developer/lending/contracts/semilog-mp)
 """
+)
+
+st.markdown(
+    "Reference: [Curve docs — Semi-Log MP](https://docs.curve.finance/developer/lending/contracts/semilog-mp)"
 )
 
 st.sidebar.header("Parameters")
 rate_min_pct = st.sidebar.slider(
     "Minimum rate r_min (%)",
     min_value=0.001,
-    max_value=100.0,
+    max_value=50.0,
     value=0.010,
     step=0.001,
 )
@@ -52,8 +57,8 @@ rate_min_pct = st.sidebar.slider(
 rate_max_pct = st.sidebar.slider(
     "Maximum rate r_max (%)",
     min_value=max(rate_min_pct + 0.001, 0.01),
-    max_value=2000.0,
-    value=max(120.0, rate_min_pct + 1.0),
+    max_value=500.0,
+    value=max(50.0, rate_min_pct + 1.0),
     step=0.5,
 )
 

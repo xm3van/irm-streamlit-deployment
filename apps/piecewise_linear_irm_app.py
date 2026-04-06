@@ -18,24 +18,22 @@ st.title("📐 Piecewise Linear Monetary Policy Simulator")
 
 st.markdown(
     r"""
-### Short description
-Two linear segments joined at a target utilization kink \(u_{opt}\).
+Two linear segments joined at a target utilization kink $u_{opt}$.
 
-### Formula
-\[
+$
 r(u)=
 \begin{cases}
   r_0 + r_1u, & u\le u_{opt} \\
   r_0 + r_1u_{opt} + r_2(u-u_{opt}), & u>u_{opt}
 \end{cases}
-\]
+$
 
-### Explanation
+Explanation:
 - Left slope (`r1`) governs low-utilization sensitivity.
 - Right slope (`r2`) governs post-kink stress response.
 - Continuity at the kink avoids rate jumps.
 
-### Intuition
+Intuition:
 - Higher `r0`: higher baseline rate everywhere.
 - Higher `r1`: tighter policy before target utilization.
 - Higher `r2`: sharper penalty near full utilization.
@@ -43,11 +41,11 @@ r(u)=
 )
 
 st.sidebar.header("Parameters")
-u_opt_pct = st.sidebar.slider("Kink utilization u_opt (%)", 0.0, 100.0, 80.0, 0.5)
-r0_pct = st.sidebar.slider("Base rate r0 (%)", 0.0, 100.0, 2.0, 0.1)
-r1_pct = st.sidebar.slider("Slope r1 (pp per 100% util)", 0.0, 300.0, 10.0, 0.5)
-r2_pct = st.sidebar.slider("Slope r2 (pp per 100% util)", float(r1_pct), 1500.0, max(35.0, float(r1_pct)), 1.0)
-utilization_pct = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.5)
+u_opt_pct = st.sidebar.slider("Kink utilization u_opt (%)", 0.0, 100.0, 85.0, 0.1)
+r0_pct = st.sidebar.slider("Base rate r0 (%)", 0.0, 20.0, 2.0, 0.1)
+r1_pct = st.sidebar.slider("Slope r1 (pp per 100% util)", 0.0, 50.0, 6.0, 0.1)
+r2_pct = st.sidebar.slider("Slope r2 (pp per 100% util)", float(r1_pct), 1500.0, max(70.0, float(r1_pct)), 1.0)
+utilization_pct = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.1)
 show_construction = st.sidebar.checkbox("Show segment construction", value=True)
 
 params = {
@@ -79,7 +77,6 @@ left_u = max(0.0, u_opt - eps)
 right_u = min(1.0, u_opt + eps)
 left_r = model.calculate_rate(left_u)
 right_r = model.calculate_rate(right_u)
-st.caption(f"Continuity check at kink: |left-right| = {abs(left_r-right_r)*100:.8f} percentage points")
 
 st.subheader("Rate curve")
 U = np.linspace(0.0, 1.0, 501)
