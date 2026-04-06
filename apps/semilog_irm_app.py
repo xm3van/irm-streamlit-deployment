@@ -18,63 +18,55 @@ st.title("📈 Semi-Log Monetary Policy Simulator")
 
 st.markdown(
     """
-A concise semi-log policy model used in Curve-style lending views.
+### Short description
+Semi-log policy maps utilization \(u\) to borrow rate \(r(u)\) with exponential growth.
 
-**Model**: \(r(u)=r_{min}\cdot (r_{max}/r_{min})^u\), with utilization \(u\in[0,1]\).
+### Formula
+\[
+r(u)=r_{min}\cdot\left(\frac{r_{max}}{r_{min}}\right)^u,\quad u\in[0,1]
+\]
 
-- `u = 0` returns `r_min`
-- `u = 1` returns `r_max`
-- between 0 and 1, rate grows exponentially
+### Explanation
+- At `u = 0`: `r(u) = r_min`
+- At `u = 1`: `r(u) = r_max`
+- Between 0 and 1: growth is smooth but increasingly steep.
+
+### Intuition
+- `r_min`: floor rate when liquidity is abundant.
+- `r_max`: stress rate near full utilization.
+- Larger `r_max / r_min`: sharper upward curve as utilization rises.
 
 Reference: [Curve docs — Semi-Log MP](https://docs.curve.finance/developer/lending/contracts/semilog-mp)
 """
 )
 
 st.sidebar.header("Parameters")
-preset = st.sidebar.selectbox(
-    "Preset profile",
-    ["Balanced", "Conservative", "Aggressive"],
-    index=0,
-    help="Preset values for quick scenario testing.",
-)
-
-preset_map = {
-    "Balanced": (0.01, 120.0),
-    "Conservative": (0.5, 40.0),
-    "Aggressive": (0.01, 300.0),
-}
-def_min_pct, def_max_pct = preset_map[preset]
-
-rate_min_pct = st.sidebar.number_input(
+rate_min_pct = st.sidebar.slider(
     "Minimum rate r_min (%)",
     min_value=0.001,
     max_value=100.0,
-    value=float(def_min_pct),
-    step=0.01,
-    format="%.3f",
-    help="UI is percentage. Internally converted to decimal.",
+    value=0.010,
+    step=0.001,
 )
-rate_max_pct = st.sidebar.number_input(
+
+rate_max_pct = st.sidebar.slider(
     "Maximum rate r_max (%)",
     min_value=max(rate_min_pct + 0.001, 0.01),
     max_value=2000.0,
-    value=float(max(def_max_pct, rate_min_pct + 0.5)),
-    step=0.1,
-    format="%.3f",
-    help="UI is percentage. Internally converted to decimal.",
+    value=max(120.0, rate_min_pct + 1.0),
+    step=0.5,
 )
 
 utilization_pct = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.1)
-log_y = st.sidebar.checkbox("Log-scale Y axis", value=True)
 
 rate_min = rate_min_pct / 100.0
 rate_max = rate_max_pct / 100.0
 utilization = utilization_pct / 100.0
 
 if utilization < 0.02 or utilization > 0.98:
-    st.warning("Utilization is near the boundary (0% or 100%); rates can be very sensitive.")
+    st.warning("Utilization is near 0%/100%; rates become highly sensitive.")
 if rate_max / max(rate_min, 1e-12) > 10_000:
-    st.warning("r_max / r_min is very large; curve may appear extremely steep.")
+    st.warning("Very high r_max / r_min selected; curve can look near-vertical.")
 
 params = {"rate_min": rate_min, "rate_max": rate_max}
 if not SemiLogIRM.param_validator(params):
@@ -93,24 +85,15 @@ fig, ax = plt.subplots()
 ax.plot(U * 100, R * 100, linewidth=2, label="Semi-log policy")
 ax.axvline(utilization * 100, linestyle=":", linewidth=1, label="current utilization")
 ax.axhline(current_rate * 100, linestyle=":", linewidth=1, label="current rate")
-if log_y:
-    ax.set_yscale("log")
 ax.set_xlabel("Utilization (%)")
-ax.set_ylabel("Borrow rate (APY %)" )
+ax.set_ylabel("Borrow rate (APY %)")
 ax.grid(True, linestyle=":", linewidth=0.5)
 ax.legend(loc="upper left")
 st.pyplot(fig, clear_figure=True)
 
-export = {
-    "type": "semi_log",
-    "params": {
-        "rate_min": rate_min,
-        "rate_max": rate_max,
-    },
-}
 st.download_button(
     "⬇️ Download params JSON",
-    data=json.dumps(export, indent=2),
+    data=json.dumps({"type": "semi_log", "params": params}, indent=2),
     file_name="semilog_irm_params.json",
     mime="application/json",
 )

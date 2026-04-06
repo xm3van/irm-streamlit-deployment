@@ -14,30 +14,32 @@ st.title("📊 Secondary Monetary Policy Simulator")
 
 st.markdown(
     """
-A concise simulator for Curve's **Secondary Monetary Policy**.
+### Short description
+Secondary Monetary Policy (SMP) maps utilization and an external reference rate into protocol borrow rate.
 
-This policy maps utilization \(u\) and an external reference rate to a protocol borrow rate,
-with parameters controlling low-utilization floor (`alpha`), high-utilization steepness (`beta`),
-and additive shift (`shift`).
+### Formula intuition
+The model blends:
+- a **low-utilization floor effect** (`alpha`),
+- a **high-utilization steepness effect** (`beta`),
+- and an additive **shift**.
+
+### Parameter intuition
+- `u_opt`: target utilization pivot.
+- `alpha`: how low rates can stay when utilization is below target.
+- `beta`: how fast rates increase above target.
+- `shift`: global upward offset.
+- `external_rate`: external anchor level.
 
 Reference: [Curve docs — Secondary MP](https://docs.curve.finance/developer/lending/contracts/secondary-mp)
 """
 )
 
 st.sidebar.header("Model Parameters")
-preset = st.sidebar.selectbox("Preset profile", ["Balanced", "Conservative", "Aggressive"], index=0)
-preset_map = {
-    "Balanced": {"u_opt": 85.0, "alpha": 0.35, "beta": 3.0, "shift": 0.0, "external": 12.0},
-    "Conservative": {"u_opt": 88.0, "alpha": 0.45, "beta": 2.0, "shift": 0.0, "external": 8.0},
-    "Aggressive": {"u_opt": 80.0, "alpha": 0.25, "beta": 6.0, "shift": 1.0, "external": 15.0},
-}
-p = preset_map[preset]
-
-u_opt = st.sidebar.slider("Target utilization u_opt (%)", 10.0, 99.0, float(p["u_opt"]), 0.5) / 100.0
-alpha = st.sidebar.slider("Alpha (low-utilization floor ratio)", 0.01, 0.99, float(p["alpha"]), 0.01)
-beta = st.sidebar.slider("Beta (high-utilization aggressiveness)", 1.01, 99.0, float(p["beta"]), 0.1)
-shift = st.sidebar.slider("Shift (percentage points)", 0.0, 20.0, float(p["shift"]), 0.1) / 100.0
-external_rate = st.sidebar.slider("External market rate (%)", 0.0, 100.0, float(p["external"]), 0.1) / 100.0
+u_opt = st.sidebar.slider("Target utilization u_opt (%)", 10.0, 99.0, 85.0, 0.5) / 100.0
+alpha = st.sidebar.slider("Alpha (low-utilization floor ratio)", 0.01, 0.99, 0.35, 0.01)
+beta = st.sidebar.slider("Beta (high-utilization aggressiveness)", 1.01, 99.0, 3.0, 0.1)
+shift = st.sidebar.slider("Shift (percentage points)", 0.0, 20.0, 0.0, 0.1) / 100.0
+external_rate = st.sidebar.slider("External market rate (%)", 0.0, 100.0, 12.0, 0.1) / 100.0
 
 utilization = st.slider("Current utilization (%)", 1.0, 100.0, 50.0, 0.5) / 100.0
 

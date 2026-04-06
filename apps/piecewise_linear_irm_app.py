@@ -17,45 +17,38 @@ st.set_page_config(page_title="Piecewise Linear Monetary Policy", layout="center
 st.title("📐 Piecewise Linear Monetary Policy Simulator")
 
 st.markdown(
-    """
-A two-segment policy with one utilization kink \(u_{opt}\):
+    r"""
+### Short description
+Two linear segments joined at a target utilization kink \(u_{opt}\).
 
-- Left side slope: `r1`
-- Right side slope: `r2` (usually steeper)
-- Base intercept: `r0`
+### Formula
+\[
+r(u)=
+\begin{cases}
+  r_0 + r_1u, & u\le u_{opt} \\
+  r_0 + r_1u_{opt} + r_2(u-u_{opt}), & u>u_{opt}
+\end{cases}
+\]
 
-This view is designed for quick stress testing of slope/kink behavior.
+### Explanation
+- Left slope (`r1`) governs low-utilization sensitivity.
+- Right slope (`r2`) governs post-kink stress response.
+- Continuity at the kink avoids rate jumps.
+
+### Intuition
+- Higher `r0`: higher baseline rate everywhere.
+- Higher `r1`: tighter policy before target utilization.
+- Higher `r2`: sharper penalty near full utilization.
 """
 )
 
 st.sidebar.header("Parameters")
-preset = st.sidebar.selectbox(
-    "Preset profile",
-    ["Balanced", "Flat-then-steep", "Aggressive"],
-    index=0,
-)
-preset_map = {
-    "Balanced": {"u_opt": 80.0, "r0": 2.0, "r1": 10.0, "r2": 35.0},
-    "Flat-then-steep": {"u_opt": 85.0, "r0": 1.0, "r1": 4.0, "r2": 80.0},
-    "Aggressive": {"u_opt": 75.0, "r0": 3.0, "r1": 20.0, "r2": 120.0},
-}
-p = preset_map[preset]
-
-u_opt_pct = st.sidebar.slider("Kink utilization u_opt (%)", 0.0, 100.0, float(p["u_opt"]), 0.5)
-r0_pct = st.sidebar.slider("Base rate r0 (%)", 0.0, 100.0, float(p["r0"]), 0.1)
-r1_pct = st.sidebar.slider("Slope r1 (pp per 100% util)", 0.0, 300.0, float(p["r1"]), 0.5)
-r2_pct = st.sidebar.slider(
-    "Slope r2 (pp per 100% util)",
-    float(r1_pct),
-    1500.0,
-    float(max(p["r2"], r1_pct)),
-    1.0,
-)
-
-log_y = st.sidebar.checkbox("Log-scale Y axis", value=False)
-show_construction = st.sidebar.checkbox("Show segment construction", value=True)
-
+u_opt_pct = st.sidebar.slider("Kink utilization u_opt (%)", 0.0, 100.0, 80.0, 0.5)
+r0_pct = st.sidebar.slider("Base rate r0 (%)", 0.0, 100.0, 2.0, 0.1)
+r1_pct = st.sidebar.slider("Slope r1 (pp per 100% util)", 0.0, 300.0, 10.0, 0.5)
+r2_pct = st.sidebar.slider("Slope r2 (pp per 100% util)", float(r1_pct), 1500.0, max(35.0, float(r1_pct)), 1.0)
 utilization_pct = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.5)
+show_construction = st.sidebar.checkbox("Show segment construction", value=True)
 
 params = {
     "r0": r0_pct / 100.0,
@@ -104,8 +97,6 @@ if show_construction:
     ax.plot([0, u_opt * 100], [r_at_0 * 100, left_r * 100], linestyle="--", linewidth=1)
     ax.plot([u_opt * 100, 100], [right_r * 100, r_at_1 * 100], linestyle="--", linewidth=1)
 
-if log_y:
-    ax.set_yscale("log")
 ax.set_xlabel("Utilization (%)")
 ax.set_ylabel("Borrow rate (APY %)")
 ax.grid(True, linestyle=":", linewidth=0.5)
