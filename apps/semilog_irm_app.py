@@ -1,152 +1,116 @@
-# Semi-Log IRM — Streamlit App
-# Save as: semilog_irm_app.py
-# Run with:  python -m streamlit run semilog_irm_app.py
-
 import json
 import os
 import sys
-from typing import Optional, Tuple
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import streamlit as st
 
-# ── Import SemiLogIRM from your project ─────────────────────────────────────
-# Try a package-style import first, then fallback to a local module.
 try:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from interest_rate_models.semilog_irm import SemiLogIRM  # type: ignore
 except Exception as e_primary:  # pragma: no cover
-    try:
-        from interest_rate_models.semilog_irm import SemiLogIRM  # type: ignore
-    except Exception as e_fallback:
-        st.error(
-            "Could not import SemiLogIRM from either\n\n"
-            " • interest_rate_models.semilog_irm\n"
-            " • semilog_irm (local next to this app)\n\n"
-            f"Primary error: {e_primary}\nFallback error: {e_fallback}"
-        )
-        st.stop()
-
-# ── Streamlit UI ────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Semi‑Log IRM", layout="centered")
-st.title("🧮 Semi‑Log IRM Simulator")
-
-st.markdown(
-    r"""
-This app explores a **Semi‑Log** interest‑rate model where the borrow rate grows
-*exponentially* with utilization.
-
-**Definition**  
-$$
-  r(u) = r_{\min} \cdot \Big(\frac{r_{\max}}{r_{\min}}\Big)^{u}
-\;=\; \exp\big(\ln r_{\min} + u\,\ln(\tfrac{r_{\max}}{r_{\min}})\big),\quad u\in[0,1].
-$$
-
-> **Units**: Rates are **decimals** (e.g., 0.10 = 10%, 10 = 1000%).
-    """
-)
-
-# Sidebar — Parameters (sliders)
-st.sidebar.header("Parameters")
-
-rate_min = st.sidebar.slider(
-    "rate_min",
-    min_value=1e-12,
-    max_value=1.0,
-    value=0.0001,
-    step=1e-12,
-    format="%.12f",
-    help="Minimum (floor) borrow rate r_min as a decimal (e.g., 0.0001 = 0.01%).",
-)
-
-# Ensure rate_max > rate_min
-min_rate_max = max(rate_min + 1e-6, 0.001)
-rate_max = st.sidebar.slider(
-    "rate_max",
-    min_value=float(min_rate_max),
-    max_value=10.0,
-    value=float(max(1.0, rate_min * 1000)),
-    step=0.01,
-    format="%.2f",
-    help="Maximum (ceiling) borrow rate r_max as a decimal (e.g., 10 = 1000%).",
-)
-
-log_y = st.sidebar.checkbox(
-    "Log‑scale Y‑axis",
-    value=False,
-    help="Recommended for exponential curves to see the whole range clearly.",
-)
-
-# Main — utilization slider
-utilization = st.slider(
-    "📌 Current Utilization",
-    min_value=0.0,
-    max_value=1.0,
-    value=0.50,
-    step=0.001,
-    help="Set current utilization u in [0, 1] to evaluate r(u).",
-)
-
-# ── Validate + instantiate model ────────────────────────────────────────────
-params = {"rate_min": rate_min, "rate_max": rate_max}
-
-# Accept validators that return bool OR (bool, message)
-try:
-    _pv_res = SemiLogIRM.param_validator(params)
-except Exception as _pv_exc:  # If validator itself errors, show a helpful message
-    st.error(f"Parameter validation raised an exception: {_pv_exc}")
+    st.error(f"Could not import SemiLogIRM: {e_primary}")
     st.stop()
 
-if isinstance(_pv_res, tuple):
-    valid, msg = (_pv_res + (None,))[:2]  # tolerate 1- or 2-element tuples
-else:
-    valid, msg = bool(_pv_res), None
+st.set_page_config(page_title="Semi-Log Monetary Policy", layout="centered")
+st.title("📈 Semi-Log Monetary Policy Simulator")
 
-if not valid:
-    st.error(msg or "Invalid parameters: require rate_min>0, rate_max>0, rate_max>rate_min.")
+st.markdown(
+    """
+A concise semi-log policy model used in Curve-style lending views.
+
+**Model**: \(r(u)=r_{min}\cdot (r_{max}/r_{min})^u\), with utilization \(u\in[0,1]\).
+
+- `u = 0` returns `r_min`
+- `u = 1` returns `r_max`
+- between 0 and 1, rate grows exponentially
+
+Reference: [Curve docs — Semi-Log MP](https://docs.curve.finance/developer/lending/contracts/semilog-mp)
+"""
+)
+
+st.sidebar.header("Parameters")
+preset = st.sidebar.selectbox(
+    "Preset profile",
+    ["Balanced", "Conservative", "Aggressive"],
+    index=0,
+    help="Preset values for quick scenario testing.",
+)
+
+preset_map = {
+    "Balanced": (0.01, 120.0),
+    "Conservative": (0.5, 40.0),
+    "Aggressive": (0.01, 300.0),
+}
+def_min_pct, def_max_pct = preset_map[preset]
+
+rate_min_pct = st.sidebar.number_input(
+    "Minimum rate r_min (%)",
+    min_value=0.001,
+    max_value=100.0,
+    value=float(def_min_pct),
+    step=0.01,
+    format="%.3f",
+    help="UI is percentage. Internally converted to decimal.",
+)
+rate_max_pct = st.sidebar.number_input(
+    "Maximum rate r_max (%)",
+    min_value=max(rate_min_pct + 0.001, 0.01),
+    max_value=2000.0,
+    value=float(max(def_max_pct, rate_min_pct + 0.5)),
+    step=0.1,
+    format="%.3f",
+    help="UI is percentage. Internally converted to decimal.",
+)
+
+utilization_pct = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.1)
+log_y = st.sidebar.checkbox("Log-scale Y axis", value=True)
+
+rate_min = rate_min_pct / 100.0
+rate_max = rate_max_pct / 100.0
+utilization = utilization_pct / 100.0
+
+if utilization < 0.02 or utilization > 0.98:
+    st.warning("Utilization is near the boundary (0% or 100%); rates can be very sensitive.")
+if rate_max / max(rate_min, 1e-12) > 10_000:
+    st.warning("r_max / r_min is very large; curve may appear extremely steep.")
+
+params = {"rate_min": rate_min, "rate_max": rate_max}
+if not SemiLogIRM.param_validator(params):
+    st.error("Invalid parameters: require positive rates and r_max > r_min.")
     st.stop()
 
 model = SemiLogIRM(rate_min=rate_min, rate_max=rate_max)
+current_rate = model.calculate_rate(utilization)
+st.metric("Borrow rate (APY %)", f"{current_rate * 100:.2f}%")
 
-# ── Compute current rate and checkpoints ────────────────────────────────────
-try:
-    current_rate = model.calculate_rate(utilization)
-    st.metric("💰 Borrow Rate", f"{current_rate:.4%}")
-except Exception as e:
-    st.error(f"Could not compute rate: {e}")
-    st.stop()
-
-# ── Plot curve ──────────────────────────────────────────────────────────────
-st.subheader("📊 Rate Curve")
+st.subheader("Rate curve")
 U = np.linspace(0.0, 1.0, 501)
 R = np.array([model.calculate_rate(u) for u in U])
 
 fig, ax = plt.subplots()
-ax.plot(U, R, linewidth=2, label="Semi‑Log r(u)")
-ax.axvline(utilization, linestyle=":", linewidth=1, label="current u")
-ax.axhline(current_rate, linestyle=":", linewidth=1, label="current r")
-
-# Axes formatting
-ax.set_xlim(0, 1)
-if np.isfinite(np.nanmin(R)) and np.isfinite(np.nanmax(R)):
-    ymin = max(1e-8, float(np.nanmin(R)) * 0.95)
-    ymax = float(np.nanmax(R)) * 1.05
-    ax.set_ylim(ymin, ymax)
+ax.plot(U * 100, R * 100, linewidth=2, label="Semi-log policy")
+ax.axvline(utilization * 100, linestyle=":", linewidth=1, label="current utilization")
+ax.axhline(current_rate * 100, linestyle=":", linewidth=1, label="current rate")
 if log_y:
     ax.set_yscale("log")
-ax.set_xlabel("Utilization (u)")
-ax.set_ylabel("Borrow Rate r(u)")
+ax.set_xlabel("Utilization (%)")
+ax.set_ylabel("Borrow rate (APY %)" )
 ax.grid(True, linestyle=":", linewidth=0.5)
 ax.legend(loc="upper left")
 st.pyplot(fig, clear_figure=True)
 
-# ── Download params (JSON) ──────────────────────────────────────────────────
-export = {"type": "semi_log", "params": params}
+export = {
+    "type": "semi_log",
+    "params": {
+        "rate_min": rate_min,
+        "rate_max": rate_max,
+    },
+}
 st.download_button(
     "⬇️ Download params JSON",
     data=json.dumps(export, indent=2),
     file_name="semilog_irm_params.json",
     mime="application/json",
 )
-

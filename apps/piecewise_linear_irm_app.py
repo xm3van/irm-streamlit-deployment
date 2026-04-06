@@ -1,158 +1,120 @@
-# Piecewise Linear IRM — Streamlit App
-# Save as: piecewise_linear_irm_app.py
-# Run with:  python -m streamlit run piecewise_linear_irm_app.py
-
 import json
 import os
 import sys
-from typing import Optional, Tuple, Any
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import streamlit as st
 
-# ── Import PieceWiseLinearIRM from your project ─────────────────────────────
-# Try the path you requested first, then fallback to older name.
 try:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from interest_rate_models.piecewise_linear_irm import PieceWiseLinearIRM  # type: ignore
 except Exception as e_primary:  # pragma: no cover
-    try:
-        from interest_rate_models.piecewise_linear import PieceWiseLinearIRM  # type: ignore
-    except Exception as e_fallback:
-        st.error(
-            "Could not import PieceWiseLinearIRM from either:\n\n"
-            " • interest_rate_models.piecewise_linear_irm\n"
-            " • interest_rate_models.piecewise_linear\n\n"
-            f"Primary error: {e_primary}\nFallback error: {e_fallback}"
-        )
-        st.stop()
+    st.error(f"Could not import PieceWiseLinearIRM: {e_primary}")
+    st.stop()
 
-# ── Streamlit UI ────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Piecewise Linear IRM", layout="centered")
-st.title("📐 Piece-wise Linear IRM Simulator")
+st.set_page_config(page_title="Piecewise Linear Monetary Policy", layout="centered")
+st.title("📐 Piecewise Linear Monetary Policy Simulator")
 
 st.markdown(
-    r"""
-This app lets you explore a **piece-wise linear** interest-rate model (IRM). It is continuous at the
-**target utilization** $u_{opt}$ and allows different slopes before/after the kink.
+    """
+A two-segment policy with one utilization kink \(u_{opt}\):
 
-**Formula**  
-$$
-r(u)=
-\begin{cases}
-  r_0 + r_1 u, & u \le u_{opt} \\
-  r_0 + r_1 u_{opt} + r_2 (u-u_{opt}), & u > u_{opt}
-\end{cases}
-$$
+- Left side slope: `r1`
+- Right side slope: `r2` (usually steeper)
+- Base intercept: `r0`
+
+This view is designed for quick stress testing of slope/kink behavior.
 """
 )
 
-# Sidebar — Parameters (all sliders, as requested)
 st.sidebar.header("Parameters")
+preset = st.sidebar.selectbox(
+    "Preset profile",
+    ["Balanced", "Flat-then-steep", "Aggressive"],
+    index=0,
+)
+preset_map = {
+    "Balanced": {"u_opt": 80.0, "r0": 2.0, "r1": 10.0, "r2": 35.0},
+    "Flat-then-steep": {"u_opt": 85.0, "r0": 1.0, "r1": 4.0, "r2": 80.0},
+    "Aggressive": {"u_opt": 75.0, "r0": 3.0, "r1": 20.0, "r2": 120.0},
+}
+p = preset_map[preset]
 
-u_opt = st.sidebar.slider(
-    "u_opt (kink)", min_value=0.0, max_value=1.0, value=0.80, step=0.01,
-    help="Target utilization where the slope can change."
+u_opt_pct = st.sidebar.slider("Kink utilization u_opt (%)", 0.0, 100.0, float(p["u_opt"]), 0.5)
+r0_pct = st.sidebar.slider("Base rate r0 (%)", 0.0, 100.0, float(p["r0"]), 0.1)
+r1_pct = st.sidebar.slider("Slope r1 (pp per 100% util)", 0.0, 300.0, float(p["r1"]), 0.5)
+r2_pct = st.sidebar.slider(
+    "Slope r2 (pp per 100% util)",
+    float(r1_pct),
+    1500.0,
+    float(max(p["r2"], r1_pct)),
+    1.0,
 )
 
-r0 = st.sidebar.slider(
-    "r0 (base)", min_value=0.0, max_value=0.5, value=0.02, step=0.005,
-    help="Base intercept rate at u = 0."
-)
+log_y = st.sidebar.checkbox("Log-scale Y axis", value=False)
+show_construction = st.sidebar.checkbox("Show segment construction", value=True)
 
-r1 = st.sidebar.slider(
-    "r1 (slope ≤ u_opt)", min_value=0.0, max_value=1.0, value=0.10, step=0.01,
-    help="Slope for the left segment (encourages borrowing at low u)."
-)
+utilization_pct = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.5)
 
-# Ensure r2 ≥ r1 by constraining min dynamically
-_default_r2 = float(max(0.01, r1))
-r2 = st.sidebar.slider(
-    "r2 (slope > u_opt)", min_value=float(r1), max_value=10.0,
-    value=_default_r2, step=0.01,
-    help="Slope for the right segment. Typically r2 ≥ r1 for sharper response."
-)
+params = {
+    "r0": r0_pct / 100.0,
+    "r1": r1_pct / 100.0,
+    "r2": r2_pct / 100.0,
+    "u_opt": u_opt_pct / 100.0,
+}
 
-show_construction = st.sidebar.checkbox(
-    "Show segment construction", value=True,
-    help="Draw dashed helper lines to visualize kink continuity."
-)
-
-# Main — utilization as a slider (requested)
-utilization = st.slider(
-    "📌 Current Utilization", 0.0, 1.0, 0.50, step=0.01,
-    help="Set the current market utilization to evaluate r(u)."
-)
-
-# ── Validate + instantiate model ────────────────────────────────────────────
-params = {"r0": r0, "r1": r1, "r2": r2, "u_opt": u_opt}
-
-# Accept validators that return bool OR (bool, message)
-try:
-    _pv_res = PieceWiseLinearIRM.param_validator(params)
-except Exception as _pv_exc:  # If validator itself errors, show a helpful message
-    st.error(f"Parameter validation raised an exception: {_pv_exc}")
-    st.stop()
-
-if isinstance(_pv_res, tuple):
-    valid, msg = (_pv_res + (None,))[:2]  # tolerate 1- or 2-element tuples
-else:
-    valid, msg = bool(_pv_res), None
-
+valid, msg = PieceWiseLinearIRM.param_validator(params)
 if not valid:
-    st.error(msg or "Invalid parameters.")
+    st.error(msg or "Invalid parameters")
     st.stop()
+
+if utilization_pct < 2 or utilization_pct > 98:
+    st.warning("Utilization is near 0%/100%; output can be sensitive.")
+if params["r2"] > 5.0:
+    st.warning("Post-kink slope is very high; rates may rise sharply near full utilization.")
 
 model = PieceWiseLinearIRM(**params)
+utilization = utilization_pct / 100.0
+current_rate = model.calculate_rate(utilization)
+st.metric("Borrow rate (APY %)", f"{current_rate * 100:.2f}%")
 
-# ── Compute current rate and checkpoints ────────────────────────────────────
-try:
-    current_rate = model.calculate_rate(utilization)
-    st.metric("💰 Borrow Rate", f"{current_rate:.4%}")
-except Exception as e:
-    st.error(f"Could not compute rate: {e}")
-    st.stop()
+# continuity metric around kink
+u_opt = params["u_opt"]
+eps = 1e-8
+left_u = max(0.0, u_opt - eps)
+right_u = min(1.0, u_opt + eps)
+left_r = model.calculate_rate(left_u)
+right_r = model.calculate_rate(right_u)
+st.caption(f"Continuity check at kink: |left-right| = {abs(left_r-right_r)*100:.8f} percentage points")
 
-# Key checkpoints for sanity
-r_at_0 = model.calculate_rate(0.0)
-eps_left = u_opt - 1e-9 if u_opt > 0 else 0.0
-eps_right = u_opt + 1e-9 if u_opt < 1.0 else 1.0
-r_left = model.calculate_rate(eps_left)
-r_right = model.calculate_rate(eps_right)
-r_at_1 = model.calculate_rate(1.0)
-
-# ── Plot curve ──────────────────────────────────────────────────────────────
-st.subheader("📊 Rate Curve")
+st.subheader("Rate curve")
 U = np.linspace(0.0, 1.0, 501)
 R = np.array([model.calculate_rate(u) for u in U])
 
 fig, ax = plt.subplots()
-ax.plot(U, R, linewidth=2, label="Piece-wise linear r(u)")
-ax.axvline(u_opt, linestyle="--", linewidth=1, label="u_opt (kink)")
-ax.axvline(utilization, linestyle=":", linewidth=1, label="current u")
-ax.axhline(current_rate, linestyle=":", linewidth=1, label="current r")
+ax.plot(U * 100, R * 100, linewidth=2, label="Piecewise policy")
+ax.axvline(u_opt * 100, linestyle="--", linewidth=1, label="u_opt")
+ax.axvline(utilization * 100, linestyle=":", linewidth=1, label="current utilization")
+ax.axhline(current_rate * 100, linestyle=":", linewidth=1, label="current rate")
 
 if show_construction:
-    # left line to kink
-    ax.plot([0, u_opt], [r_at_0, r_left], linestyle="--", linewidth=1)
-    # right line from kink to 1
-    ax.plot([u_opt, 1.0], [r_right, r_at_1], linestyle="--", linewidth=1)
+    r_at_0 = model.calculate_rate(0.0)
+    r_at_1 = model.calculate_rate(1.0)
+    ax.plot([0, u_opt * 100], [r_at_0 * 100, left_r * 100], linestyle="--", linewidth=1)
+    ax.plot([u_opt * 100, 100], [right_r * 100, r_at_1 * 100], linestyle="--", linewidth=1)
 
-ax.set_xlim(0, 1)
-ax.set_ylim(0, float(np.nanmax(R)) * 1.05 if np.isfinite(np.nanmax(R)) else 1.0)
-ax.set_xlabel("Utilization (u)")
-ax.set_ylabel("Borrow Rate r(u)")
+if log_y:
+    ax.set_yscale("log")
+ax.set_xlabel("Utilization (%)")
+ax.set_ylabel("Borrow rate (APY %)")
 ax.grid(True, linestyle=":", linewidth=0.5)
 ax.legend(loc="upper left")
 st.pyplot(fig, clear_figure=True)
 
-# ── Download params (JSON) ──────────────────────────────────────────────────
-export = {"type": "piecewise_linear", "params": params}
 st.download_button(
     "⬇️ Download params JSON",
-    data=json.dumps(export, indent=2),
+    data=json.dumps({"type": "piecewise_linear", "params": params}, indent=2),
     file_name="piecewise_linear_irm_params.json",
     mime="application/json",
 )
-
