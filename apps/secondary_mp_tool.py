@@ -1,108 +1,129 @@
-# smp_app.py
-import streamlit as st
-import numpy as np
-import matplotlib.pyplot as plt
-
-import sys
+import json
 import os
+import sys
+
+import matplotlib.pyplot as plt
+import numpy as np
+import streamlit as st
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from interest_rate_models.secondary_monetary_policy import SecondaryMonetaryPolicy
 
-# App configuration
 st.set_page_config(layout="centered", page_title="Secondary Monetary Policy")
-
-# Title
-st.title("📈 Secondary Monetary Policy Simulator")
-
-# Introduction
-st.markdown(
-    """
-    The **Secondary Monetary Policy (SMP)** is a utilization-based interest rate model used in Curve's Lending AMM architecture. 
-    It is designed to respond **smoothly** to supply and demand imbalances, ensuring capital-efficient rates in both low and high utilization regimes.
-    The SMP determines the interest rate `r(u)` as a nonlinear function of utilization `u`, blending an **external market rate** with protocol-specific incentives to ensure competitiveness and stability.
-
-    ℹ️ Read the [official Curve SMP documentation](https://docs.curve.fi/lending/contracts/secondary-mp/) for in-depth details.
-    """
+st.title("📊 Secondary Monetary Policy Simulator")
+st.write(
+    "Secondary Monetary Policy (SMP) defines the borrow rate as a hyperbolic function "
+    "of utilization, scaled by an external reference rate."
 )
 
-# Sidebar — Parameter input
+st.markdown("Formula:")
+st.latex(
+    r"r(u)=r_0\left(r_{\min f}+\frac{A}{u_{\inf}-u}\right)+\mathrm{shift}"
+)
+
+st.markdown("Derived parameters:")
+st.latex(
+    r"u_{\inf}=\frac{(\beta-1)u_{\mathrm{opt}}}{(\beta-1)u_{\mathrm{opt}}-(1-u_{\mathrm{opt}})(1-\alpha)}"
+)
+st.latex(
+    r"A=(1-\alpha)\frac{u_{\inf}(u_{\inf}-u_{\mathrm{opt}})}{u_{\mathrm{opt}}}"
+)
+st.latex(
+    r"r_{\min f}=\alpha-\frac{A}{u_{\inf}}"
+)
+
+st.markdown("Variables:")
+st.write(
+"""
+- `u` — utilization (debt / total liquidity), in [0, 1]  
+- `r(u)` — borrow rate  
+- `r_0` — external reference rate (constant in this app; EMA on-chain)  
+- `shift` — additive rate offset  
+- `u_opt` — target utilization (pivot point)  
+- `alpha` — rate ratio at zero utilization  
+- `beta` — rate ratio near full utilization  
+
+Interpretation:
+- At low utilization → rate ≈ `alpha * r_0`  
+- Near target utilization → rate ≈ `r_0`  
+- As utilization → `u_inf` → rate → ∞ (vertical asymptote)  
+"""
+)
+
 st.sidebar.header("Model Parameters")
+u_opt = st.sidebar.slider("Target utilization u_opt (%)", 5.0, 100.0, 85.0, 0.5) / 100.0
+alpha = st.sidebar.slider("Alpha (low-utilization floor ratio)", 0.01, 0.99, 0.35, 0.01)
+beta = st.sidebar.slider("Beta (high-utilization aggressiveness)", 1.01, 99.0, 3.0, 0.1)
+shift = st.sidebar.slider("Shift (percentage points)", 0.0, 20.0, 0.0, 0.1) / 100.0
+external_rate = st.sidebar.slider("External Reference rate (%)", 0.0, 100.0, 4.2, 0.1) / 100.0
 
-u_opt = st.sidebar.slider("Target Utilization (u_opt)", 0.1, 0.99, 0.85,
-                          help="The ideal utilization level (e.g., 85%). Below this, supply is in excess; above it, borrowing demand dominates.")
-alpha = st.sidebar.slider("Alpha (Minimum ratio)", 0.01, 0.99, 0.35,
-                          help="Defines the minimum share of the external rate to be passed to borrowers when utilization is low.")
-beta = st.sidebar.slider("Beta (Aggressiveness)", 1.01, 99.0, 3.0,
-                         help="Controls how aggressively the rate increases as utilization exceeds u_opt. Higher beta → steeper curve.")
-shift = st.sidebar.slider("Rate Shift", 0.0, 0.1, 0.00,
-                          help="Adds a constant to the output rate. Used to adjust for protocol-level base rate incentives.")
-external_rate = st.sidebar.slider(
-    "External Market Rate",
-    min_value=0.00,
-    max_value=0.50,
-    value=0.12,
-    step=0.001,
-    format="%.3f",
-    help="Benchmark external interest rate (e.g., CeFi yield or base AMM return)."
-)
+utilization = st.slider("Current utilization (%)", 0.0, 100.0, 50.0, 0.5) / 100.0
 
-# Main control — utilization
-utilization = st.slider("📌 Current Market Utilization", 0.01, 1.00, 0.5,
-                        help="Set the current market utilization to calculate the SMP rate.")
+if utilization < 0.02 or utilization > 0.98:
+    st.warning("Utilization near 0%/100% can produce sharp moves in output rate.")
+if beta > 20:
+    st.warning("Very high beta selected; curve can become extremely steep near high utilization.")
 
-# Model initialization
+# validator preview
+denominator = (beta - 1) * u_opt - (1 - u_opt) * (1 - alpha)
+if abs(denominator) < 1e-6:
+    st.error("Invalid parameter combination: denominator near zero. Adjust alpha/beta/u_opt.")
+    st.stop()
+
 try:
     model = SecondaryMonetaryPolicy(
         u_opt=u_opt,
         alpha=alpha,
         beta=beta,
         shift=shift,
-        external_rate=external_rate
+        external_rate=external_rate,
     )
     current_rate = model.calculate_rate(utilization, rate=None)
-    st.metric(label="💰 Calculated Borrow Rate", value=f"{current_rate:.4%}")
 except Exception as e:
     st.error(f"Could not compute rate: {e}")
     st.stop()
 
-# Rate curve visualization
-st.subheader("📊 Interest Rate Curve")
+st.metric(label="Borrow rate (APY %)", value=f"{current_rate * 100:.2f}%")
 
-util_vals = np.linspace(0.01, 1.00, 100)
+st.subheader("Interest-rate curve")
+util_vals = np.linspace(0.01, 1.00, 240)
 rate_vals = []
+error_count = 0
 for u in util_vals:
     try:
-        rate = model.calculate_rate(u, rate=None)
-        rate_vals.append(rate)
-    except:
+        rate_vals.append(model.calculate_rate(float(u), rate=None))
+    except Exception:
         rate_vals.append(np.nan)
+        error_count += 1
+
+if error_count:
+    st.warning(f"{error_count} grid points could not be evaluated; check parameter stability.")
 
 fig, ax = plt.subplots()
-ax.plot(util_vals, rate_vals, label="SMP Rate Curve", color="black", linewidth=2)
-ax.axvline(utilization, color='red', linestyle='--', label="Current Utilization")
-ax.axhline(current_rate, color='gray', linestyle=':', label="Current Rate")
-ax.set_xlabel("Utilization")
-ax.set_ylabel("Borrow Rate")
+ax.plot(util_vals * 100, np.array(rate_vals) * 100, label="Secondary MP curve", color="black", linewidth=2)
+ax.axvline(utilization * 100, color="red", linestyle="--", label="Current utilization")
+ax.axhline(current_rate * 100, color="gray", linestyle=":", label="Current rate")
+ax.set_xlabel("Utilization (%)")
+ax.set_ylabel("Borrow rate (APY %)")
 ax.grid(True, linestyle=':', color='gray')
 ax.legend()
-st.pyplot(fig)
+st.pyplot(fig, clear_figure=True)
 
-# Further explanation section
-st.markdown(
-    """
-    ---
-    ### 📘 Model Intuition
-
-    - At **low utilization**, the rate remains low to encourage borrowing and avoid unnecessary capital costs.
-    - Around **target utilization (`u_opt`)**, the curve gently transitions to higher rates to balance demand and supply.
-    - At **high utilization**, the rate increases sharply to discourage further borrowing and attract more liquidity.
-
-    **Why use an external rate?**
-    > *The external market rate anchors the SMP to competitive conditions, making sure it doesn’t drift too far from opportunity cost.*
-
-    **Shift parameter?**
-    > *It allows the protocol to introduce an incentive buffer or adjust for minimum baseline revenue requirements.*
-
-    ---
-    """
+st.download_button(
+    "⬇️ Download params JSON",
+    data=json.dumps(
+        {
+            "type": "secondary_monetary_policy",
+            "params": {
+                "u_opt": u_opt,
+                "alpha": alpha,
+                "beta": beta,
+                "shift": shift,
+                "external_rate": external_rate,
+            },
+        },
+        indent=2,
+    ),
+    file_name="secondary_mp_params.json",
+    mime="application/json",
 )
