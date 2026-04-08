@@ -196,19 +196,15 @@ rate0_apy = st.sidebar.slider(
     ),
 ) / 100.0
 
-log_sigma_ui = st.sidebar.slider(
-    "Price sensitivity log10(σ)",
-    14.0,
-    18.0,
-    float(np.log10(7e15)),
-    0.01,
-    help=(
-        "Definition: sigma controls how strongly the price term reacts to deviations from peg.\n\n"
-        "Interpretation: smaller sigma means a sharper rate response to depeg; larger sigma smooths the response.\n\n"
-        "Practical range: a useful working zone is often around log10(σ) ≈ 15.5 to 16.3, though this is calibration-dependent."
-    ),
+sigma_ui = st.sidebar.slider(
+    "Sigma",
+    0.0001,
+    1.0000,
+    0.0080,
+    0.0001,
+    format="%.4f",
 )
-sigma = float(np.clip(10 ** log_sigma_ui, 1e14, 1e18))
+sigma = sigma_ui * ONE
 
 target_fraction = st.sidebar.slider(
     "Target debt fraction (%)",
